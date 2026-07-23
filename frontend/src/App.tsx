@@ -74,7 +74,7 @@ function App() {
             <div className="text-5xl">🔮</div>
             <h2 className="text-xl font-medium text-gray-300">Ask the enterprise anything</h2>
             <div className="text-sm text-gray-500 max-w-md text-center space-y-1">
-              <p>"Who owns DMX?"</p>
+              <p>"Who owns the Order Service?"</p>
               <p>"What APIs does Servicing Account expose?"</p>
               <p>"How does Real-Time Rates work?"</p>
               <p>"What services does Platform Engineering own?"</p>

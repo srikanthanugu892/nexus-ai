@@ -1,4 +1,4 @@
-"""Confluence Documentation Collector — indexes pages from SERENITY space into pgvector.
+"""Confluence Documentation Collector — indexes pages from a Confluence space into pgvector.
 
 Uses the Confluence REST API to fetch pages, converts content to plain text,
 chunks into searchable segments, and stores in pgvector.
@@ -91,7 +91,7 @@ def chunk_text(text: str, title: str) -> list[str]:
 
 
 async def fetch_space_pages(client: httpx.AsyncClient, limit: int = 50) -> list[dict]:
-    """Fetch pages from the SERENITY space via CQL search."""
+    """Fetch pages from the configured Confluence space via CQL search."""
     pages = []
     start = 0
 
