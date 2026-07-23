@@ -40,3 +40,6 @@ node_modules/
 # Vault tokens
 .vault-token
 .vault-tokens/
+
+# CI workflow (add via GitHub UI — token needs workflow scope)
+.github/workflows/ci.yml
