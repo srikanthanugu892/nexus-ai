@@ -77,7 +77,7 @@ function App() {
               <p>"Who owns DMX?"</p>
               <p>"What APIs does Servicing Account expose?"</p>
               <p>"How does Real-Time Rates work?"</p>
-              <p>"What services does Platform Maturity own?"</p>
+              <p>"What services does Platform Engineering own?"</p>
             </div>
           </div>
         )}

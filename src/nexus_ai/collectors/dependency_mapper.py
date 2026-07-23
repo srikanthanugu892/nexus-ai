@@ -3,7 +3,7 @@
 Analyzes:
 1. Postman/Bruno collection URLs to identify which services call which other services
 2. Swagger endpoint patterns to identify internal service-to-service paths
-3. Known architectural dependencies (hardcoded from platform knowledge)
+3. Known architectural dependencies (from service catalog or manual configuration)
 
 Creates CALLS relationships in Neo4j: (ServiceA)-[:CALLS]->(ServiceB)
 
@@ -15,78 +15,54 @@ import asyncio
 import json
 import re
 import time
+from pathlib import Path
 
 from nexus_ai.db.neo4j import get_neo4j_driver, close_neo4j
 from nexus_ai.db.postgres import get_pg_pool, close_pg
 
-# Map service hostnames to service names (for URL pattern matching)
-SERVICE_HOST_MAP = {
-    "odx-dmx": "DMX",
-    "odx-udx": "UDX",
-    "odx-config-service": "Config Service",
-    "odx-servicing-account": "Servicing Account",
-    "odx-search-service": "Search Service",
-    "odx-doc-uploader": "Doc Uploader",
-    "odx-document-management-service": "Document Management Service",
-    "odx-virus-scan-service": "Virus Scan Service",
-    "odx-platform-integrator": "Platform Integrator",
-    "odx-butler": "Butler",
-    "odx-dmx-rbac": "RBAC",
-    "odx-dmx-notifications": "DMX Notifications",
-    "odx-rex-go": "Rules Engine (REX-GO)",
-    "amt-transform-service": "Transform Service",
-    "amt-activity-service": "Activity Service",
-    "amt-report-storage-service": "Report Storage",
-    "amt-headless-interpreter-service": "Headless Interpreter",
-    "amt-product-config-bff": "Product Config BFF",
-    "odx-api-gateway": "API Gateway",
-    "amt-amortization-service": "Amortization Service (Morty)",
-    "amt-vendor-service": "VIX (Vendor Integration)",
-}
 
-# Known architectural dependencies (from platform knowledge / Confluence docs)
-# These are relationships that are hard to infer from URLs alone
-KNOWN_DEPENDENCIES = [
-    # DMX orchestrates decisions and calls multiple services
-    ("DMX", "Rules Engine (REX-GO)"),
-    ("DMX", "Rules Engine (REX-JAVA)"),
-    ("DMX", "UDX"),
-    ("DMX", "Config Service"),
-    ("DMX", "DMX Notifications"),
-    ("DMX", "Servicing Account"),
-    ("DMX", "Transform Service"),
-    # API Gateway routes to services
-    ("API Gateway", "DMX"),
-    ("API Gateway", "Servicing Account"),
-    ("API Gateway", "Search Service"),
-    ("API Gateway", "Doc Uploader"),
-    # UDX calls vendor services
-    ("UDX", "VIX (Vendor Integration)"),
-    ("UDX", "Platform Integrator"),
-    # Doc management flow
-    ("Doc Uploader", "Virus Scan Service"),
-    ("Doc Uploader", "Document Management Service"),
-    # Headless interpreter uses DMX
-    ("Headless Interpreter", "DMX"),
-    ("Headless Interpreter", "Config Service"),
-    # Customer Interpreter uses headless
-    ("Customer Interpreter App", "Headless Interpreter"),
-    ("Customer Interpreter App", "Config Service"),
-    # Search aggregates from multiple sources
-    ("Search Service", "Servicing Account"),
-    ("Search Service", "DMX"),
-    # Activity service tracks queue manager events
-    ("Activity Service", "DMX"),
-    # Product Config BFF
-    ("Product Config BFF", "Config Service"),
-    # Report storage
-    ("Report Storage", "Doc Uploader"),
-    # All services use Config Service
-    ("RBAC", "Config Service"),
-    ("Butler", "DMX"),
-    ("Butler", "UDX"),
-    ("Butler", "Servicing Account"),
-]
+def _load_known_dependencies() -> list[tuple[str, str]]:
+    """Load dependency relationships from the service catalog JSON."""
+    catalog_path = Path(__file__).parent.parent.parent.parent / "data" / "service_catalog.json"
+    if not catalog_path.exists():
+        return []
+
+    with open(catalog_path) as f:
+        catalog = json.load(f)
+
+    return [(dep["from"], dep["to"]) for dep in catalog.get("dependencies", [])]
+
+
+def _build_host_map() -> dict[str, str]:
+    """Build hostname → service name map from the service catalog.
+
+    Maps common URL patterns like 'order-service' to 'Order Service' for
+    inferring dependencies from Postman/Bruno collection URLs.
+    """
+    catalog_path = Path(__file__).parent.parent.parent.parent / "data" / "service_catalog.json"
+    if not catalog_path.exists():
+        return {}
+
+    with open(catalog_path) as f:
+        catalog = json.load(f)
+
+    host_map = {}
+    for svc in catalog.get("services", []):
+        # Generate possible hostname patterns from service name
+        name = svc["name"]
+        # "Order Service" → "order-service"
+        slug = name.lower().replace(" ", "-")
+        host_map[slug] = name
+        # Also try without "service" suffix: "order-service" → "order"
+        if slug.endswith("-service"):
+            host_map[slug[:-8]] = name
+
+    return host_map
+
+
+# Load from catalog at module import
+SERVICE_HOST_MAP = _build_host_map()
+KNOWN_DEPENDENCIES = _load_known_dependencies()
 
 
 async def infer_from_postman_urls() -> list[tuple[str, str]]:
@@ -99,7 +75,6 @@ async def infer_from_postman_urls() -> list[tuple[str, str]]:
     dependencies = []
 
     async with pool.acquire() as conn:
-        # Get all indexed Postman/Bruno requests with their service names and URLs
         rows = await conn.fetch(
             """
             SELECT service_name, content, metadata
@@ -115,21 +90,17 @@ async def infer_from_postman_urls() -> list[tuple[str, str]]:
 
             # Extract URLs from the content
             urls = re.findall(r'https?://[^\s"\'<>]+', content)
-            # Also check for service host patterns in URL fields
             url_match = re.search(r'URL:\s*(.+)', content)
             if url_match:
                 urls.append(url_match.group(1).strip())
 
             for url in urls:
-                # Match against known service hostnames
                 for host_pattern, target_service in SERVICE_HOST_MAP.items():
                     if host_pattern in url.lower():
-                        # Don't create self-referencing dependency
                         if source_service and source_service.lower() != target_service.lower():
                             dependencies.append((source_service, target_service))
                         break
 
-    # Deduplicate
     return list(set(dependencies))
 
 
@@ -140,7 +111,6 @@ async def store_dependencies(dependencies: list[tuple[str, str]]) -> int:
 
     async with driver.session() as session:
         for caller, callee in dependencies:
-            # Prefer exact match, fall back to CONTAINS
             result = await session.run(
                 """
                 MATCH (a:Service)
@@ -178,8 +148,8 @@ async def run_mapper() -> dict:
     url_deps = await infer_from_postman_urls()
     print(f"   Found {len(url_deps)} inferred dependencies from URLs")
 
-    # 2. Add known architectural dependencies
-    print(f"\n2. Adding {len(KNOWN_DEPENDENCIES)} known architectural dependencies...")
+    # 2. Load known architectural dependencies from catalog
+    print(f"\n2. Loading {len(KNOWN_DEPENDENCIES)} known dependencies from service catalog...")
 
     # Combine all dependencies
     all_deps = list(set(url_deps + KNOWN_DEPENDENCIES))
@@ -194,7 +164,7 @@ async def run_mapper() -> dict:
 
     summary = {
         "inferred_from_urls": len(url_deps),
-        "known_architectural": len(KNOWN_DEPENDENCIES),
+        "known_from_catalog": len(KNOWN_DEPENDENCIES),
         "total_unique": len(all_deps),
         "stored_in_neo4j": stored,
         "duration_seconds": round(duration, 1),
@@ -203,7 +173,7 @@ async def run_mapper() -> dict:
     print(f"\n{'=' * 60}")
     print(f"Done in {summary['duration_seconds']}s")
     print(f"  From URLs: {len(url_deps)}")
-    print(f"  Known deps: {len(KNOWN_DEPENDENCIES)}")
+    print(f"  From catalog: {len(KNOWN_DEPENDENCIES)}")
     print(f"  Stored: {stored} relationships")
     print(f"{'=' * 60}")
 
@@ -214,12 +184,10 @@ async def verify_dependencies():
     """Show dependency graph summary."""
     driver = await get_neo4j_driver()
     async with driver.session() as session:
-        # Count total relationships
         result = await session.run("MATCH ()-[r:CALLS]->() RETURN count(r) AS count")
         record = await result.single()
         print(f"\nTotal CALLS relationships: {record['count']}")
 
-        # Most depended-on services (most incoming CALLS)
         result = await session.run(
             """
             MATCH (consumer:Service)-[:CALLS]->(target:Service)
@@ -232,7 +200,6 @@ async def verify_dependencies():
         async for record in result:
             print(f"  {record['service']}: {record['consumer_count']} consumers")
 
-        # Services with most dependencies (most outgoing CALLS)
         result = await session.run(
             """
             MATCH (caller:Service)-[:CALLS]->(target:Service)
@@ -241,7 +208,7 @@ async def verify_dependencies():
             LIMIT 10
             """
         )
-        print("\nServices with most dependencies (call the most other services):")
+        print("\nServices with most outgoing dependencies:")
         async for record in result:
             print(f"  {record['service']}: calls {record['dep_count']} services")
 
