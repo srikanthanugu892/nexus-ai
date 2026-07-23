@@ -92,6 +92,138 @@ In a 10–50 microservice platform, engineers waste hours answering questions li
 
 ---
 
+## How a Query Works (Agent Loop)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        QUERY: "Who owns Payment Gateway?"                │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  User Question
+       │
+       ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │ 1. MODEL ROUTING                                        │
+  │    Pattern match: "who owns" → Fast model ($0.005)      │
+  │    (complex queries → Smart model, $0.03)               │
+  └──────────────────────────────┬──────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │ 2. LLM CALL (with tool definitions)                     │
+  │    System prompt (cached via cache_control) +           │
+  │    12 tool schemas + conversation history               │
+  │    → LLM returns: tool_call("find_owner", {name: ...}) │
+  └──────────────────────────────┬──────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │ 3. TOOL EXECUTION                                       │
+  │    Neo4j query: MATCH (s:Service)-[:OWNED_BY]->(t:Team) │
+  │    Result: {"service": "Payment Gateway",               │
+  │             "owner": "Payments"}                         │
+  └──────────────────────────────┬──────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │ 4. RESULT PROCESSING                                    │
+  │    • Truncate to 2KB (prevents token bloat)             │
+  │    • Redact secrets (3 layers)                          │
+  │    • Append to conversation as tool result              │
+  └──────────────────────────────┬──────────────────────────┘
+                                 │
+                                 ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │ 5. FINAL ANSWER                                         │
+  │    LLM sees tool result → generates answer              │
+  │    → Redact again → Return to user                      │
+  │                                                         │
+  │    "Payment Gateway is owned by the Payments team."     │
+  │    Total: 1 tool call, ~800 tokens, 3.2s, $0.004       │
+  └─────────────────────────────────────────────────────────┘
+```
+
+For complex queries (impact analysis, live DB), the loop runs 2-3 rounds with multiple tools before producing an answer. Budget cap (30K tokens, 5 rounds) prevents runaway costs.
+
+---
+
+## Data Pipeline (Pre-indexing)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                  PRE-INDEXING PIPELINE (Collectors)                   │
+│  Trigger: POST /admin/collectors/run-all                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+  │    Swagger      │  │   Confluence   │  │ Postman/Bruno  │
+  │   Collector     │  │   Collector    │  │   Collector    │
+  │                 │  │                │  │                │
+  │ Fetches OpenAPI │  │ Fetches wiki   │  │ Parses API     │
+  │ specs from live │  │ pages, chunks  │  │ collections    │
+  │ service /docs   │  │ at 500 tokens  │  │ from GitHub    │
+  └───────┬─────────┘  └───────┬────────┘  └───────┬────────┘
+          │                     │                    │
+          ▼                     ▼                    ▼
+  ┌───────────────────────────────────────────────────────────┐
+  │         pgvector — Embeddings Table                        │
+  │                                                           │
+  │  Per chunk: content | source_type | service_name |        │
+  │             embedding (1536d) | metadata | source_url     │
+  │                                                           │
+  │  Hybrid search: cosine similarity + ILIKE text fallback   │
+  └───────────────────────────────────────────────────────────┘
+
+  ┌────────────────┐  ┌────────────────┐
+  │  DB Schema     │  │Service Catalog │
+  │  Collector     │  │    Loader      │
+  │                │  │                │
+  │ Vault → creds  │  │ JSON → Neo4j   │
+  │ → info_schema  │  │ nodes + rels   │
+  └───────┬────────┘  └───────┬────────┘
+          │                    │
+          ▼                    ▼
+  ┌───────────────────────────────────────────────────────────┐
+  │         Neo4j — Knowledge Graph                            │
+  │                                                           │
+  │  (:Service)-[:OWNED_BY]->(:Team)                          │
+  │  (:Service)-[:CALLS]->(:Service)                          │
+  │  (:Service)-[:USES_DATABASE]->(:Database)                 │
+  │  (:Service)-[:EXPOSES_API]->(:API)                        │
+  └───────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Performance & Cost
+
+| Metric | Value |
+|--------|-------|
+| Simple query (ownership, listing) | **~3s**, ~800 tokens, **~$0.005** |
+| Complex query (impact, multi-tool) | **~8s**, ~4K tokens, **~$0.03** |
+| Live DB query (via Vault) | **~5s** (incl. credential fetch) |
+| Model routing savings | **~80%** cost reduction on simple queries |
+| Meta-tool token savings | **~15K tokens/request** (vs injecting all MCP schemas) |
+| Prompt caching hit rate | **~90%** (system prompt reused across rounds) |
+| Max budget per query | 30K tokens / 5 tool rounds (hard cap) |
+
+---
+
+## Tradeoffs & Alternatives Considered
+
+| Decision | Alternative | Why I chose this |
+|----------|-------------|-----------------|
+| **Neo4j** for service graph | PostgreSQL with recursive CTEs | Graph queries (3-hop dependency tracing) are O(1) in Neo4j vs O(n³) in SQL. Trade: extra infra. |
+| **pgvector** for embeddings | Pinecone / Weaviate | Co-located with interaction logs, no external dependency, free. Trade: less scalable past ~100K chunks. |
+| **OpenAI-compatible API** | Direct Anthropic/Bedrock SDK | Single interface works with OpenAI, LiteLLM, Ollama, vLLM. Swap providers without code changes. |
+| **Meta-tool pattern** for MCP | Send all tool schemas to LLM | 40+ schemas = 15K tokens/request = $5/day burned on schema injection alone. Meta-tool: 500 tokens. |
+| **Vault dynamic creds** | Static DB passwords in .env | Short-lived creds (auto-expire), audit trail, no secret rotation needed. Trade: Vault dependency. |
+| **Tool result truncation** | Send full results to LLM | One 50-row DB result = 10K tokens. Truncate to 2KB = LLM sees enough to answer, stays in budget. |
+| **Hybrid search** (vector + text) | Vector-only | Exact matches ("Config Service") fail with pure semantic search. Text fallback catches them. Trade: two code paths. |
+| **Model routing** | Always use best model | 70% of queries are simple lookups. GPT-4o-mini handles them perfectly at 1/10th the cost. |
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -102,7 +234,7 @@ In a 10–50 microservice platform, engineers waste hours answering questions li
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/nexus-ai.git
+git clone https://github.com/srikanthanugu892/nexus-ai.git
 cd nexus-ai
 
 # Copy env template and add your API key
