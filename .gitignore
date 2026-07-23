@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables (contains secrets)
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (local data)
+neo4j_data/
+postgres_data/
+
+# Test & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node (frontend)
+node_modules/
+
+# Vault tokens
+.vault-token
+.vault-tokens/

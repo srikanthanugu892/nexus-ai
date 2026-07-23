@@ -1,0 +1,84 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: .env
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - POSTGRES_HOST=postgres
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ~/.vault-token:/root/.vault-token:ro
+      # Docker socket mount for GitHub MCP server (spawns a container).
+      # Security: grants host-level Docker API access.
+      # Alternatives: run GitHub MCP as a sidecar, or disable in data/mcp.json.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+      - external
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - app
+    networks:
+      - internal
+      - external
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5-community
+    ports:
+      - "127.0.0.1:7474:7474"   # Browser UI — localhost only
+      - "127.0.0.1:7687:7687"   # Bolt — localhost only
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-nexus-dev-password}
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD:-nexus-dev-password}", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "127.0.0.1:5434:5432"
+    environment:
+      - POSTGRES_DB=nexus_ai
+      - POSTGRES_USER=nexus
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexus-dev-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus_ai"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  neo4j_data:
+  postgres_data:
+
+networks:
+  internal:
+  external:
+    driver: bridge

@@ -1,0 +1,122 @@
+{
+  "teams": [
+    "Platform Engineering",
+    "Payments",
+    "Identity & Access",
+    "Commerce",
+    "Data & Analytics"
+  ],
+  "services": [
+    {
+      "name": "Order Service",
+      "language": "Java (Spring)",
+      "owner": "Commerce",
+      "has_swagger": true,
+      "swagger_url": "http://order-service:8080/v3/api-docs",
+      "repo": "your-org/order-service"
+    },
+    {
+      "name": "Payment Gateway",
+      "language": "Go",
+      "owner": "Payments",
+      "has_swagger": true,
+      "swagger_url": "http://payment-gateway:8080/swagger/doc.json",
+      "repo": "your-org/payment-gateway"
+    },
+    {
+      "name": "User Service",
+      "language": "Java (Spring)",
+      "owner": "Identity & Access",
+      "has_swagger": true,
+      "swagger_url": "http://user-service:8080/v3/api-docs",
+      "repo": "your-org/user-service"
+    },
+    {
+      "name": "Auth Service",
+      "language": "TypeScript (NestJS)",
+      "owner": "Identity & Access",
+      "has_swagger": false,
+      "repo": "your-org/auth-service"
+    },
+    {
+      "name": "Inventory Service",
+      "language": "Python (FastAPI)",
+      "owner": "Commerce",
+      "has_swagger": true,
+      "swagger_url": "http://inventory-service:8000/openapi.json",
+      "repo": "your-org/inventory-service"
+    },
+    {
+      "name": "Notification Service",
+      "language": "Java (Micronaut)",
+      "owner": "Platform Engineering",
+      "has_swagger": true,
+      "swagger_url": "http://notification-service:8080/swagger/notification-service-1.0.yml",
+      "repo": "your-org/notification-service"
+    },
+    {
+      "name": "Search Service",
+      "language": "Java (Spring)",
+      "owner": "Platform Engineering",
+      "has_swagger": true,
+      "swagger_url": "http://search-service:8080/v3/api-docs",
+      "repo": "your-org/search-service"
+    },
+    {
+      "name": "API Gateway",
+      "language": "Go",
+      "owner": "Platform Engineering",
+      "has_swagger": false,
+      "repo": "your-org/api-gateway"
+    },
+    {
+      "name": "Analytics Pipeline",
+      "language": "Python (Airflow)",
+      "owner": "Data & Analytics",
+      "has_swagger": false,
+      "repo": "your-org/analytics-pipeline"
+    },
+    {
+      "name": "Config Service",
+      "language": "Java (Micronaut)",
+      "owner": "Platform Engineering",
+      "has_swagger": true,
+      "swagger_url": "http://config-service:8080/swagger/config-service-1.0.yml",
+      "repo": "your-org/config-service"
+    },
+    {
+      "name": "Document Service",
+      "language": "Java (Spring)",
+      "owner": "Commerce",
+      "has_swagger": true,
+      "swagger_url": "http://document-service:8080/v3/api-docs",
+      "repo": "your-org/document-service"
+    },
+    {
+      "name": "Reporting Service",
+      "language": "Python (FastAPI)",
+      "owner": "Data & Analytics",
+      "has_swagger": true,
+      "swagger_url": "http://reporting-service:8000/openapi.json",
+      "repo": "your-org/reporting-service"
+    }
+  ],
+  "dependencies": [
+    {"from": "API Gateway", "to": "Order Service"},
+    {"from": "API Gateway", "to": "User Service"},
+    {"from": "API Gateway", "to": "Payment Gateway"},
+    {"from": "Order Service", "to": "Payment Gateway"},
+    {"from": "Order Service", "to": "Inventory Service"},
+    {"from": "Order Service", "to": "Notification Service"},
+    {"from": "Order Service", "to": "User Service"},
+    {"from": "Payment Gateway", "to": "Notification Service"},
+    {"from": "User Service", "to": "Auth Service"},
+    {"from": "User Service", "to": "Notification Service"},
+    {"from": "Inventory Service", "to": "Notification Service"},
+    {"from": "Search Service", "to": "Order Service"},
+    {"from": "Search Service", "to": "Inventory Service"},
+    {"from": "Config Service", "to": "Notification Service"},
+    {"from": "Document Service", "to": "Search Service"},
+    {"from": "Reporting Service", "to": "Analytics Pipeline"}
+  ]
+}

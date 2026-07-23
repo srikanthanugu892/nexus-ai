@@ -1,0 +1,8 @@
+{
+  "_comment": "Hosts the agent is allowed to call via call_service_api. Supports wildcards (*.example.com).",
+  "hosts": [
+    "*.internal.example.com",
+    "*.dev.example.com",
+    "*.staging.example.com"
+  ]
+}

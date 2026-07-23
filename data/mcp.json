@@ -1,0 +1,37 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server", "stdio"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "disabled": false,
+      "_note": "GitHub MCP for code search, file reading, PRs. Requires Docker."
+    },
+    "atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "CONFLUENCE_URL": "${ATLASSIAN_URL}/wiki",
+        "CONFLUENCE_USERNAME": "${ATLASSIAN_EMAIL}",
+        "CONFLUENCE_API_TOKEN": "${ATLASSIAN_API_TOKEN}",
+        "JIRA_URL": "${ATLASSIAN_URL}",
+        "JIRA_USERNAME": "${ATLASSIAN_EMAIL}",
+        "JIRA_API_TOKEN": "${ATLASSIAN_API_TOKEN}"
+      },
+      "disabled": true,
+      "_note": "Disabled by default — local Jira tools are more token-efficient. Enable if you need full Confluence/Jira MCP."
+    },
+    "slack": {
+      "command": "npx",
+      "args": ["-y", "slack-mcp-server@latest", "--transport", "stdio"],
+      "env": {
+        "SLACK_MCP_XOXC_TOKEN": "${SLACK_XOXC_TOKEN}",
+        "SLACK_MCP_XOXD_TOKEN": "${SLACK_XOXD_TOKEN}"
+      },
+      "disabled": true,
+      "_note": "Slack MCP — requires browser session tokens. Disabled by default."
+    }
+  }
+}

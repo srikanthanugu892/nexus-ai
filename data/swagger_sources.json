@@ -1,0 +1,59 @@
+{
+  "environment": "dev",
+  "sources": [
+    {
+      "service": "Order Service",
+      "url": "http://order-service:8080/v3/api-docs",
+      "spec_type": "spring",
+      "format": "json"
+    },
+    {
+      "service": "User Service",
+      "url": "http://user-service:8080/v3/api-docs",
+      "spec_type": "spring",
+      "format": "json"
+    },
+    {
+      "service": "Payment Gateway",
+      "url": "http://payment-gateway:8080/swagger/doc.json",
+      "spec_type": "go_swaggo",
+      "format": "json"
+    },
+    {
+      "service": "Inventory Service",
+      "url": "http://inventory-service:8000/openapi.json",
+      "spec_type": "fastapi",
+      "format": "json"
+    },
+    {
+      "service": "Notification Service",
+      "url": "http://notification-service:8080/swagger/notification-service-1.0.yml",
+      "spec_type": "micronaut",
+      "format": "yaml"
+    },
+    {
+      "service": "Search Service",
+      "url": "http://search-service:8080/v3/api-docs",
+      "spec_type": "spring",
+      "format": "json"
+    },
+    {
+      "service": "Config Service",
+      "url": "http://config-service:8080/swagger/config-service-1.0.yml",
+      "spec_type": "micronaut",
+      "format": "yaml"
+    },
+    {
+      "service": "Document Service",
+      "url": "http://document-service:8080/v3/api-docs",
+      "spec_type": "spring",
+      "format": "json"
+    },
+    {
+      "service": "Reporting Service",
+      "url": "http://reporting-service:8000/openapi.json",
+      "spec_type": "fastapi",
+      "format": "json"
+    }
+  ]
+}
