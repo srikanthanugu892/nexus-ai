@@ -32,48 +32,61 @@ In a 10–50 microservice platform, engineers waste hours answering questions li
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    NEXUS AI — SYSTEM ARCHITECTURE                     │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    User([Engineer]) --> UI[React Chat UI :3000]
+    UI --> API[FastAPI :8000]
+    API --> Orch
 
- Engineer ──→ React Chat UI (:3000) ──→ FastAPI API (:8000)
-                                             │
-                                             ▼
-                                   ┌──────────────────┐
-                                   │ AGENT ORCHESTRATOR│
-                                   │                  │
-                                   │ Model Router:    │
-                                   │  Simple → Fast   │
-                                   │  Complex → Smart │
-                                   │                  │
-                                   │ Loop (max 5):    │
-                                   │  LLM → tools →  │
-                                   │  results → LLM  │
-                                   │  → final answer  │
-                                   └────────┬─────────┘
-                                            │
-                        ┌───────────────────┼───────────────────┐
-                        │                   │                   │
-                        ▼                   ▼                   ▼
-             ┌──────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-             │  Neo4j Graph DB  │ │ pgvector Search │ │   Live Tools    │
-             │                  │ │                 │ │                 │
-             │ Services, teams  │ │ Swagger specs   │ │ query_database  │
-             │ dependencies,    │ │ Postman/Bruno   │ │  → Vault → DB  │
-             │ API endpoints    │ │ Confluence docs │ │ call_service_api│
-             │                  │ │ DB schemas      │ │  → auto-OAuth2 │
-             └──────────────────┘ └─────────────────┘ │ find_incidents  │
-                                                      │  → Jira REST   │
-                                                      └────────┬────────┘
-                                                               │
-                                   ┌───────────────────────────┼────────┐
-                                   │      MCP SERVERS          │        │
-                                   ├───────────────────────────┼────────┤
-                                   │ GitHub (code search)      │        │
-                                   │ Atlassian (optional)      │        │
-                                   │ Slack (optional)          │        │
-                                   └────────────────────────────────────┘
+    subgraph Orchestrator["Agent Orchestrator"]
+        Orch[Model Router] --> Loop{Tool Loop}
+        Loop -->|max 5 rounds| LLM[LLM Call]
+        LLM -->|tool_calls| Exec[Execute Tools]
+        Exec -->|results| LLM
+        LLM -->|final text| Answer[Return Answer]
+    end
+
+    subgraph KnowledgeLayer["Knowledge Layer"]
+        Neo4j[(Neo4j Graph DB)]
+        PGVec[(pgvector Search)]
+    end
+
+    subgraph LiveTools["Live Tools"]
+        DB[query_database<br/>Vault → DB]
+        API_Call[call_service_api<br/>auto-OAuth2]
+        Jira[find_incidents<br/>Jira REST]
+    end
+
+    subgraph MCPServers["MCP Servers"]
+        GitHub[GitHub MCP<br/>code search]
+        Atlassian[Atlassian MCP<br/>optional]
+    end
+
+    Exec --> Neo4j
+    Exec --> PGVec
+    Exec --> DB
+    Exec --> API_Call
+    Exec --> Jira
+    Exec --> GitHub
+
+    style Orchestrator fill:#1a1a2e,stroke:#16213e,color:#fff
+    style KnowledgeLayer fill:#0f3460,stroke:#16213e,color:#fff
+    style LiveTools fill:#533483,stroke:#16213e,color:#fff
+    style MCPServers fill:#e94560,stroke:#16213e,color:#fff
+```
+
+### Model Routing Strategy
+
+```mermaid
+graph LR
+    Q[User Question] --> Check{Pattern Match}
+    Check -->|"who owns..."<br/>"list services..."| Fast[GPT-4o-mini<br/>~$0.005/query]
+    Check -->|"impact of..."<br/>"query database..."| Smart[GPT-4o<br/>~$0.03/query]
+    Fast --> Answer[Answer]
+    Smart --> Answer
+
+    style Fast fill:#2ecc71,stroke:#27ae60,color:#fff
+    style Smart fill:#e74c3c,stroke:#c0392b,color:#fff
 ```
 
 ---
@@ -94,103 +107,62 @@ In a 10–50 microservice platform, engineers waste hours answering questions li
 
 ## How a Query Works (Agent Loop)
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        QUERY: "Who owns Payment Gateway?"                │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant U as Engineer
+    participant R as Model Router
+    participant LLM as LLM (GPT-4o/mini)
+    participant T as Tool Executor
+    participant DB as Neo4j / pgvector
 
-  User Question
-       │
-       ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │ 1. MODEL ROUTING                                        │
-  │    Pattern match: "who owns" → Fast model ($0.005)      │
-  │    (complex queries → Smart model, $0.03)               │
-  └──────────────────────────────┬──────────────────────────┘
-                                 │
-                                 ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │ 2. LLM CALL (with tool definitions)                     │
-  │    System prompt (cached via cache_control) +           │
-  │    12 tool schemas + conversation history               │
-  │    → LLM returns: tool_call("find_owner", {name: ...}) │
-  └──────────────────────────────┬──────────────────────────┘
-                                 │
-                                 ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │ 3. TOOL EXECUTION                                       │
-  │    Neo4j query: MATCH (s:Service)-[:OWNED_BY]->(t:Team) │
-  │    Result: {"service": "Payment Gateway",               │
-  │             "owner": "Payments"}                         │
-  └──────────────────────────────┬──────────────────────────┘
-                                 │
-                                 ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │ 4. RESULT PROCESSING                                    │
-  │    • Truncate to 2KB (prevents token bloat)             │
-  │    • Redact secrets (3 layers)                          │
-  │    • Append to conversation as tool result              │
-  └──────────────────────────────┬──────────────────────────┘
-                                 │
-                                 ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │ 5. FINAL ANSWER                                         │
-  │    LLM sees tool result → generates answer              │
-  │    → Redact again → Return to user                      │
-  │                                                         │
-  │    "Payment Gateway is owned by the Payments team."     │
-  │    Total: 1 tool call, ~800 tokens, 3.2s, $0.004       │
-  └─────────────────────────────────────────────────────────┘
+    U->>R: "Who owns Payment Gateway?"
+    R->>R: Pattern match → "who owns" → Fast model
+    R->>LLM: System prompt + question + 12 tool schemas
+    LLM->>T: tool_call("find_owner", {name: "Payment Gateway"})
+    T->>DB: MATCH (s:Service)-[:OWNED_BY]->(t:Team)
+    DB-->>T: {service: "Payment Gateway", owner: "Payments"}
+    T->>T: Truncate (2KB cap) + Redact secrets
+    T->>LLM: Tool result
+    LLM-->>U: "Payment Gateway is owned by the Payments team."
+    Note over U,DB: Total: 1 tool call, ~800 tokens, 3.2s, $0.004
 ```
-
-For complex queries (impact analysis, live DB), the loop runs 2-3 rounds with multiple tools before producing an answer. Budget cap (30K tokens, 5 rounds) prevents runaway costs.
 
 ---
 
 ## Data Pipeline (Pre-indexing)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                  PRE-INDEXING PIPELINE (Collectors)                   │
-│  Trigger: POST /admin/collectors/run-all                            │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Collectors["Data Collectors (triggered via API)"]
+        Swagger[Swagger Collector<br/>Live OpenAPI specs]
+        Confluence[Confluence Collector<br/>Wiki pages → chunks]
+        Postman[Postman/Bruno Collector<br/>API collections from GitHub]
+        DBSchema[DB Schema Collector<br/>Vault → info_schema]
+        Catalog[Service Catalog Loader<br/>JSON fixture → graph]
+    end
 
-  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
-  │    Swagger      │  │   Confluence   │  │ Postman/Bruno  │
-  │   Collector     │  │   Collector    │  │   Collector    │
-  │                 │  │                │  │                │
-  │ Fetches OpenAPI │  │ Fetches wiki   │  │ Parses API     │
-  │ specs from live │  │ pages, chunks  │  │ collections    │
-  │ service /docs   │  │ at 500 tokens  │  │ from GitHub    │
-  └───────┬─────────┘  └───────┬────────┘  └───────┬────────┘
-          │                     │                    │
-          ▼                     ▼                    ▼
-  ┌───────────────────────────────────────────────────────────┐
-  │         pgvector — Embeddings Table                        │
-  │                                                           │
-  │  Per chunk: content | source_type | service_name |        │
-  │             embedding (1536d) | metadata | source_url     │
-  │                                                           │
-  │  Hybrid search: cosine similarity + ILIKE text fallback   │
-  └───────────────────────────────────────────────────────────┘
+    subgraph Storage["Storage Layer"]
+        PG[(pgvector<br/>Embeddings Table<br/>content + vector 1536d)]
+        Neo[(Neo4j<br/>Knowledge Graph<br/>services, teams, deps)]
+    end
 
-  ┌────────────────┐  ┌────────────────┐
-  │  DB Schema     │  │Service Catalog │
-  │  Collector     │  │    Loader      │
-  │                │  │                │
-  │ Vault → creds  │  │ JSON → Neo4j   │
-  │ → info_schema  │  │ nodes + rels   │
-  └───────┬────────┘  └───────┬────────┘
-          │                    │
-          ▼                    ▼
-  ┌───────────────────────────────────────────────────────────┐
-  │         Neo4j — Knowledge Graph                            │
-  │                                                           │
-  │  (:Service)-[:OWNED_BY]->(:Team)                          │
-  │  (:Service)-[:CALLS]->(:Service)                          │
-  │  (:Service)-[:USES_DATABASE]->(:Database)                 │
-  │  (:Service)-[:EXPOSES_API]->(:API)                        │
-  └───────────────────────────────────────────────────────────┘
+    Swagger --> PG
+    Confluence --> PG
+    Postman --> PG
+    DBSchema --> PG
+    Catalog --> Neo
+
+    subgraph Search["Search at Query Time"]
+        Hybrid[Hybrid Search<br/>cosine similarity + ILIKE fallback]
+        Graph[Graph Traversal<br/>ownership, dependencies, impact]
+    end
+
+    PG --> Hybrid
+    Neo --> Graph
+
+    style Collectors fill:#2c3e50,stroke:#34495e,color:#fff
+    style Storage fill:#8e44ad,stroke:#9b59b6,color:#fff
+    style Search fill:#27ae60,stroke:#2ecc71,color:#fff
 ```
 
 ---
