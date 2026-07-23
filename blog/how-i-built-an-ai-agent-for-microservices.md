@@ -138,7 +138,7 @@ Plus: sensitive DB columns (`password`, `token`, `secret`, `api_key`) are auto-r
 
 ## Design Decision #5: Hybrid Search (Vector + Text)
 
-Pure semantic search fails on exact matches. Ask for "Config Service" and vector search might return "Application Settings Manager" because they're semantically similar — but you wanted the exact service.
+Pure semantic search fails on exact matches. Ask for "Auth Service" and vector search might return "Identity Provider Manager" because they're semantically similar — but you wanted the exact service.
 
 Solution: try vector search first, fall back to text:
 
@@ -149,7 +149,7 @@ async def search_documentation(query: str) -> str:
     
     # 2. If nothing found: multi-stage text fallback
     if not rows:
-        rows = await text_search_exact_phrase(query)      # "Config Service"
+        rows = await text_search_exact_phrase(query)      # "Auth Service"
     if not rows:
         rows = await text_search_and_keywords(query)      # config AND service
     if not rows:
@@ -158,7 +158,7 @@ async def search_documentation(query: str) -> str:
     return results
 ```
 
-This catches both "how does payment processing work?" (semantic) and "Config Service endpoints" (exact).
+This catches both "how does payment processing work?" (semantic) and "Auth Service endpoints" (exact).
 
 ---
 

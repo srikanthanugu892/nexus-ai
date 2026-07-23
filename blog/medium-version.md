@@ -116,11 +116,11 @@ Plus: sensitive DB columns (password, token, secret, api_key) are auto-redacted 
 
 ## Design Decision #5: Hybrid Search (Vector + Text)
 
-Pure semantic search fails on exact matches. Ask for "Config Service" and vector search might return "Application Settings Manager" because they're semantically similar — but you wanted the exact service.
+Pure semantic search fails on exact matches. Ask for "Auth Service" and vector search might return "Identity Provider Manager" because they're semantically similar — but you wanted the exact service.
 
 Solution: try vector search first, fall back to multi-stage text search.
 
-**Stage 1:** Vector cosine similarity (semantic — finds conceptual matches like "payment flow" → "amortization_schedule")
+**Stage 1:** Vector cosine similarity (semantic — finds conceptual matches like "payment flow" → "transaction_ledger")
 
 **Stage 2 (if empty):** Exact phrase ILIKE match
 
@@ -128,7 +128,7 @@ Solution: try vector search first, fall back to multi-stage text search.
 
 **Stage 4 (if empty):** OR keywords ranked by match count
 
-This catches both "how does payment processing work?" (semantic) and "Config Service endpoints" (exact).
+This catches both "how does payment processing work?" (semantic) and "Auth Service endpoints" (exact).
 
 ---
 
